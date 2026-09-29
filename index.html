@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kinder Rentrée - Roue de la Chance</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Cairo:wght@600;700;900&display=swap" rel="stylesheet">
+  <style>
+    @font-face {
+      font-family: 'Montserrat';
+      src: url('/assets/fonts/Montserrat-SemiBold.ttf') format('truetype');
+      font-weight: 600;
+      font-style: normal;
+    }
+
+    @font-face {
+      font-family: 'Montserrat';
+      src: url('/assets/fonts/Montserrat-Bold.ttf') format('truetype');
+      font-weight: 700;
+      font-style: normal;
+    }
+
+    :root {
+      --accent: #D70B0E;
+      --accent-light: #EF1C20;
+      --accent-dark: #A8080B;
+      --ink: #000000;
+      --ink-warm: #1a1a1a;
+      --success-tint: #E8F5E8;
+      --border-light: #DDDDDD;
+      --muted: #666666;
+    }
+
+    body {
+      font-family: 'Fredoka', 'Montserrat', sans-serif;
+      background: #D70B0E;
+      color: #1a1a1a;
+      overflow-x: hidden;
+    }
+
+    /* Background art on its own fixed layer (background-attachment: fixed is
+       broken on iOS Safari). bg.png (1536x2048) always covers the whole screen
+       without distortion, anchored to the top so its printed title is never cut:
+       tall screens crop the plain red sides, wide screens crop the bottom. */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      background: #D70B0E url('/assets/images/bg.png') no-repeat center top;
+      background-size: cover;
+    }
+
+    /* Empty space the height of the title printed at the top of bg.png (~24% of
+       the image). With "cover" the image is drawn max(100vh, 133.3vw) tall, so the
+       title is 24% of that. */
+    .bg-title-space {
+      height: max(24vh, 32vw);
+      flex-shrink: 0;
+    }
+
+
+    .font-arabic {
+      font-family: 'Cairo', 'Fredoka', sans-serif;
+    }
+
+    /* Letter-spacing splits Arabic letters apart, and uppercase does nothing for it. */
+    .font-arabic,
+    .font-arabic * {
+      letter-spacing: normal !important;
+      text-transform: none !important;
+    }
+
+    /* Palette: red #D70B0E, white, black. Buttons are solid red (primary) or
+       black (secondary), both with a white outline so they stand out on the red page. */
+    .nutella-gradient {
+      background: #D70B0E;
+      color: #FFFFFF;
+      border: 3px solid #FFFFFF;
+    }
+
+    .btn-black {
+      background: #000000;
+      color: #FFFFFF;
+      border: 3px solid #FFFFFF;
+    }
+
+    .btn-3d.nutella-gradient,
+    .btn-3d.btn-black {
+      border: 3px solid #FFFFFF;
+      box-shadow: 0 5px 0 rgba(0, 0, 0, 0.35), 0 10px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    .btn-3d.nutella-gradient:active,
+    .btn-3d.btn-black:active {
+      transform: translateY(3px);
+      border-bottom-width: 3px;
+      box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35), 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .nutella-text {
+      color: #D70B0E;
+    }
+
+    @keyframes pop-in {
+      0% { transform: scale(0.85); opacity: 0; }
+      60% { transform: scale(1.04); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .animate-pop-in {
+      animation: pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+
+    @keyframes wiggle {
+      0%, 100% { transform: rotate(0deg); }
+      25% { transform: rotate(-3deg); }
+      75% { transform: rotate(3deg); }
+    }
+
+    .hover-wiggle:hover {
+      animation: wiggle 0.4s ease-in-out;
+    }
+
+    .btn-3d {
+      position: relative;
+      transition: all 0.1s ease;
+      border-bottom: 4px solid rgba(0, 0, 0, 0.3);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .btn-3d:active {
+      transform: translateY(2px);
+      border-bottom-width: 1px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn-modern {
+      position: relative;
+      transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+      border-bottom: 3px solid rgba(0, 0, 0, 0.4);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn-modern:active {
+      transform: translateY(2px);
+      border-bottom-width: 1px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+
+    .glass-card {
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(12px);
+      border: 2px solid rgba(215,11,14, 0.35);
+    }
+
+    .admin-card {
+      background: linear-gradient(145deg, #ffffff 0%, #fdfdfd 100%);
+      border: 2px solid rgba(215,11,14, 0.2);
+      box-shadow: 10px 10px 20px rgba(0, 0, 0, 0.06), -5px -5px 15px rgba(255, 255, 255, 0.6);
+    }
+
+    /* Admin inputs and dropdowns */
+    .admin-input,
+    .admin-select {
+      width: 100%;
+      background: #FFFFFF;
+      border: 1.5px solid rgba(0, 0, 0, 0.12);
+      border-radius: 0.85rem;
+      padding: 0.7rem 0.9rem;
+      font-size: 0.8rem;
+      font-weight: 800;
+      color: #000000;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .admin-input:focus,
+    .admin-select:focus {
+      border-color: #D70B0E;
+      box-shadow: 0 0 0 3px rgba(215, 11, 14, 0.12);
+    }
+
+    /* Admin area: solid white cards so text stays readable over admin bg.png. */
+    .admin-root .admin-card {
+      background: #FFFFFF !important;
+      border: 1px solid rgba(0, 0, 0, 0.08) !important;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.07) !important;
+      backdrop-filter: none !important;
+    }
+
+    @keyframes shine {
+      0% {
+        transform: translateX(-100%);
+      }
+
+      100% {
+        transform: translateX(100%);
+      }
+    }
+
+    .shine-effect {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .shine-effect::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 50%;
+      height: 100%;
+      background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.2), transparent);
+      transform: skewX(-20deg);
+      animation: shine 4s infinite;
+    }
+
+    @keyframes fall-sway {
+      0% {
+        transform: translateY(-10vh) translateX(0) rotate(0deg);
+        opacity: 0;
+      }
+
+      10% {
+        opacity: 1;
+      }
+
+      100% {
+        transform: translateY(110vh) translateX(var(--sway-amount, 30px)) rotate(360deg);
+        opacity: 0;
+      }
+    }
+
+    .animate-fall-sway {
+      animation: fall-sway linear infinite;
+      will-change: transform, opacity;
+    }
+  </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4"
+  }
+}
+</script>
+  <link rel="stylesheet" href="/index.css">
+</head>
+
+<body class="min-h-screen">
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+
+</html>
