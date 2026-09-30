@@ -13,11 +13,12 @@ export const LOTS: LotConfig[] = [
   // name shown on that slice until the prize photo exists.
   { id: 'Set fluo', label: 'Set\nfluo', labelAr: 'سيت\nفليو', spin: 3, color: '#FFFFFF', textColor: '#000000', image: '/assets/images/prizes/set-fluo.png' },
   { id: 'Nutella B-Ready', label: 'Nutella\nB-Ready', labelAr: 'نوتيلا\nبي ريدي', spin: 1, color: '#D70B0E', textColor: '#ffffff', image: '/assets/images/prizes/nutella-b-ready.png' },
-  { id: 'Trousse + crayons de couleur', label: 'Trousse +\ncrayons couleur', labelAr: 'تروس +\nأقلام الألوان', spin: 2, color: '#FFFFFF', textColor: '#000000', image: '/assets/images/prizes/trousse-crayons-couleur.png' },
+  // Surligneur and Set fluo (both spin-3 prizes) are kept apart on the wheel.
+  { id: 'Surligneur 5 pcs', label: 'Surligneur\n5 pcs', labelAr: '5 ستابيلو\nفليو', spin: 3, color: '#FFFFFF', textColor: '#000000', image: '/assets/images/prizes/surligneur-5-pcs.png' },
   { id: 'Trousse non tissé + crayons cire', label: 'Trousse non tissé\n+ crayons cire', labelAr: 'تروس ديال الثوب\n+ أقلام الشمع', spin: 2, color: '#D70B0E', textColor: '#ffffff', image: '/assets/images/prizes/trousse-non-tisse-crayons-cire.png' },
   { id: 'Nutella 15g', label: 'Nutella\n15g', labelAr: 'نوتيلا\n15غ', spin: 1, color: '#FFFFFF', textColor: '#000000', image: '/assets/images/prizes/nutella-15g.png' },
   { id: 'Autocollant', label: 'Autocollant', labelAr: 'لصاقات', spin: 2, color: '#FFFFFF', textColor: '#000000', image: '/assets/images/prizes/autocollant.png' },
-  { id: 'Surligneur 5 pcs', label: 'Surligneur\n5 pcs', labelAr: '5 ستابيلو\nفليو', spin: 3, color: '#D70B0E', textColor: '#ffffff', image: '/assets/images/prizes/surligneur-5-pcs.png' },
+  { id: 'Trousse + crayons de couleur', label: 'Trousse +\ncrayons couleur', labelAr: 'تروس +\nأقلام الألوان', spin: 2, color: '#D70B0E', textColor: '#ffffff', image: '/assets/images/prizes/trousse-crayons-couleur.png' },
 ];
 
 // Arabic names of the cities, shown on the tablet (the database keeps the French names).

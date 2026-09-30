@@ -4,6 +4,7 @@ import Wheel from './components/Wheel';
 import { Mall, LotConfig, LotType, SpinLog, AdminView, WheelKind, PromoTier, CycleState, SpinStage } from './types';
 import { LOTS, TIERS, SPIN_STAGES, CYCLE_POOLS, getTier, getSpinLots, wheelForSpin, spinOfWheel, cityAr, storesCountAr, ADMIN_PASSWORD, GREETINGS, ASSETS } from './constants';
 import { DB } from './services/databaseService';
+import { downloadExcel } from './services/excelExport';
 import { CITIES } from './database';
 
 const OTHER_CITY = 'Autres';
@@ -102,7 +103,7 @@ const ADMIN_PAGES: { id: AdminView; label: string; icon: string; subtitle: strin
   { id: 'performance', label: 'Performance', icon: 'trend', subtitle: 'Gains et cycles par magasin' },
   { id: 'malls', label: 'Magasins', icon: 'store', subtitle: 'Noms, codes SFA et codes d’accès' },
   { id: 'inventory', label: 'Stocks', icon: 'box', subtitle: 'Stock de lots par magasin' },
-  { id: 'reports', label: 'Rapports', icon: 'file', subtitle: 'Exports CSV et réinitialisation' },
+  { id: 'reports', label: 'Rapports', icon: 'file', subtitle: 'Exports Excel et réinitialisation' },
 ];
 
 // Title block for the tablet's city -> store -> code steps.
@@ -625,19 +626,51 @@ const App: React.FC = () => {
     });
   }, [logs, malls, dbCityFilter, dbMallFilter, dbTimeframeFilter, dbPromoFilter]);
 
-  const exportCSV = (data: SpinLog[], filename: string) => {
-    const csvCell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const headers = "Date,Ville,SFA,N° Magasin,Magasin,Ticket,Lot,Statut,Promotion,Spin\n";
-    const csvContent = data.map(l => {
-      const mall = mallById.get(l.mallId);
-      return [l.timestamp, mall?.city, mall?.sfa, mall?.number, mall?.name ?? l.mallName, l.ticketId, l.lotWon, l.status, l.promo, l.spinNumber]
-        .map(csvCell).join(',');
-    }).join("\n");
-    // BOM so Excel reads accents (Salé, Kénitra...) correctly.
-    const blob = new Blob(['﻿' + headers + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
+  // One spreadsheet row per win: same columns for the Excel export and for copy-paste.
+  const EXPORT_HEADERS = ['Date', 'Heure', 'Ville', 'N° magasin', 'Magasin', 'Code SFA', 'Formule', 'Tour', 'Lot gagné', 'N° ticket', 'Photo ticket'];
+  const EXPORT_WIDTHS = [12, 10, 14, 11, 34, 16, 20, 8, 32, 12, 14];
+  const logToRow = (l: SpinLog) => {
+    const mall = mallById.get(l.mallId);
+    const tier = TIERS.find(t => t.id === l.promo);
+    const [date, time] = l.timestamp.split(' ');
+    return {
+      date: date ?? '', time: time ?? '', city: mall?.city ?? '', number: mall?.number ?? '',
+      store: mall?.name ?? l.mallName, sfa: mall?.sfa ?? '', formula: tier?.label ?? l.promo ?? '',
+      tour: tier && l.spinNumber ? `${l.spinNumber}/${tier.spins}` : '', lot: l.lotWon, ticket: String(l.ticketId ?? ''),
+      photo: l.ticketPhoto && /^https?:/.test(l.ticketPhoto) ? l.ticketPhoto : '',
+    };
+  };
+
+  const exportExcel = (data: SpinLog[], filename: string) => {
+    const rows = data.map(l => {
+      const r = logToRow(l);
+      return [r.date, r.time, r.city, typeof r.number === 'number' ? r.number : r.number, r.store, r.sfa, r.formula, r.tour, r.lot, r.ticket,
+        r.photo ? { text: 'Voir photo', url: r.photo } : ''];
+    });
+    downloadExcel(filename, 'Gains', EXPORT_HEADERS, rows, EXPORT_WIDTHS);
+  };
+
+  // Copying rows from an admin table puts clean spreadsheet rows on the clipboard
+  // (one line per win, one value per column, no images or colours).
+  const copyRowsAsTable = (e: React.ClipboardEvent, data: SpinLog[]) => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const picked = Array.from((e.currentTarget as HTMLElement).querySelectorAll<HTMLTableRowElement>('tr[data-row]'))
+      .filter(tr => range.intersectsNode(tr))
+      .map(tr => data[Number(tr.dataset.row)])
+      .filter(Boolean);
+    if (picked.length === 0) return;
+    const rows = picked.map(l => {
+      const r = logToRow(l);
+      return [r.date, r.time, r.city, String(r.number), r.store, r.sfa, r.formula, r.tour, r.lot, r.ticket, r.photo];
+    });
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const tsv = [EXPORT_HEADERS, ...rows].map(r => r.map(c => c.replace(/[\t\n]/g, ' ')).join('\t')).join('\n');
+    const html = `<table><tr>${EXPORT_HEADERS.map(h => `<th>${esc(h)}</th>`).join('')}</tr>${rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table>`;
+    e.clipboardData.setData('text/plain', tsv);
+    e.clipboardData.setData('text/html', html);
+    e.preventDefault();
   };
 
   const logsWithPhotos = useMemo(() => logs.filter(l => !!l.ticketPhoto), [logs]);
@@ -656,7 +689,7 @@ const App: React.FC = () => {
   // Wins table shared by "Gains en direct" and "Historique des gains".
   // First column = date/time with a small green check (authenticated); store names wrap in full.
   const renderWinsTable = (rows: SpinLog[], opts: { maxHeight: string; timeOnly?: boolean; highlightFirst?: boolean }) => (
-    <div className="admin-card rounded-2xl overflow-hidden">
+    <div className="admin-card rounded-2xl overflow-hidden" onCopy={(e) => copyRowsAsTable(e, rows)}>
       <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: opts.maxHeight }}>
         <table className="w-full text-left text-sm border-collapse">
           <thead className="bg-black text-white text-[10px] md:text-[11px] uppercase tracking-[0.14em] font-black sticky top-0 z-10">
@@ -678,7 +711,7 @@ const App: React.FC = () => {
               const lot = LOTS.find(l => l.id === log.lotWon);
               const [datePart, timePart] = log.timestamp.split(' ');
               return (
-                <tr key={log.id ?? i} className={`hover:bg-black/[0.03] transition-colors ${opts.highlightFirst && i === 0 ? 'bg-[#D70B0E]/[0.04]' : ''}`}>
+                <tr key={log.id ?? i} data-row={i} className={`hover:bg-black/[0.03] transition-colors ${opts.highlightFirst && i === 0 ? 'bg-[#D70B0E]/[0.04]' : ''}`}>
                   <td className="px-4 py-3 whitespace-nowrap align-middle">
                     <div className="flex items-center gap-2.5">
                       <span title="Authentifié" className="shrink-0 w-5 h-5 rounded-full bg-green-500 text-white flex items-center justify-center shadow-sm">
@@ -778,9 +811,9 @@ const App: React.FC = () => {
                 <option value="all">Toutes les formules</option>
                 {TIERS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
               </select>
-              <button onClick={() => exportCSV(filteredAnalyticsLogs, `report_${dbCityFilter}_${dbMallFilter}.csv`)}
+              <button onClick={() => exportExcel(filteredAnalyticsLogs, `gains_${dbCityFilter === 'all' ? 'toutes-villes' : dbCityFilter}_${new Date().toISOString().slice(0, 10)}.xlsx`)}
                 className="btn-3d btn-black px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2">
-                <Icon name="download" className="w-4 h-4" /> Export CSV
+                <Icon name="download" className="w-4 h-4" /> Export Excel
               </button>
             </div>
           </div>
@@ -990,8 +1023,8 @@ const App: React.FC = () => {
               <span className="w-11 h-11 rounded-xl bg-black text-white flex items-center justify-center mb-4"><Icon name="file" className="w-5 h-5" /></span>
               <h3 className="text-lg text-black font-black uppercase tracking-wide">{title}</h3>
               <p className="text-xs text-black/45 font-bold mb-5">{rows.length} gain(s) · tous magasins</p>
-              <button onClick={() => exportCSV(rows, `gains_${days}j.csv`)} className="mt-auto btn-3d btn-black w-full py-3 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2">
-                <Icon name="download" className="w-4 h-4" /> Télécharger CSV
+              <button onClick={() => exportExcel(rows, `gains_${days}j_${new Date().toISOString().slice(0, 10)}.xlsx`)} className="mt-auto btn-3d btn-black w-full py-3 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2">
+                <Icon name="download" className="w-4 h-4" /> Télécharger Excel
               </button>
             </div>
           );
@@ -1210,7 +1243,7 @@ const App: React.FC = () => {
         <main className="z-10 w-full flex-grow flex flex-col items-center justify-start max-w-full">
           {!promoTier ? (
             <div className="w-full max-w-5xl mx-auto text-center">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6 items-stretch">
+              <div className="grid grid-cols-3 gap-2 sm:gap-4 md:gap-6 items-stretch">
                 {TIERS.map((tier, i) => {
                   const available = tierAvailable(tier.id);
                   const left = tierStock(tier.id);
@@ -1221,26 +1254,26 @@ const App: React.FC = () => {
                       onClick={() => available && setPromoTier(tier.id)}
                       disabled={!available}
                       style={{ animationDelay: `${i * 0.1}s` }}
-                      className={`font-arabic animate-pop-in group relative overflow-hidden flex flex-col items-center text-center rounded-[2rem] md:rounded-[2.5rem] p-5 md:p-7 transition-all duration-300 ${available
+                      className={`font-arabic animate-pop-in group relative overflow-hidden flex flex-col items-center text-center rounded-2xl sm:rounded-[2rem] md:rounded-[2.5rem] p-2.5 sm:p-5 md:p-7 transition-all duration-300 ${available
                         ? 'bg-white ring-2 ring-[#D70B0E]/20 shadow-[0_12px_32px_rgba(215,11,14,0.18)] hover:ring-[#D70B0E] hover:-translate-y-1.5 hover:shadow-[0_20px_44px_rgba(215,11,14,0.3)] active:scale-[0.98]'
                         : 'bg-gray-100 ring-2 ring-gray-300 opacity-70 cursor-not-allowed'}`}
                     >
                       <div className={`absolute inset-x-0 top-0 h-40 pointer-events-none bg-gradient-to-b ${available ? 'from-[#D70B0E]/12' : 'from-gray-300/40'} to-transparent`} />
-                      <span className={`absolute top-3 left-3 z-10 text-[11px] md:text-xs font-black px-3 py-1 rounded-full ${available ? 'bg-green-500/10 text-green-700' : 'bg-gray-300 text-gray-500'}`}>
+                      <span className={`absolute top-2 left-2 sm:top-3 sm:left-3 z-10 text-[9px] sm:text-[11px] md:text-xs font-black px-2 sm:px-3 py-1 rounded-full ${available ? 'bg-green-500/10 text-green-700' : 'bg-gray-300 text-gray-500'}`}>
                         {available ? `باقي ${left} فرصة` : 'سالا الستوك'}
                       </span>
 
                       {/* Jar grows with the number of spins */}
-                      <div className="relative w-full h-36 md:h-52 flex items-end justify-center mb-4 mt-4">
+                      <div className="relative w-full h-24 sm:h-36 md:h-52 flex items-end justify-center mb-3 sm:mb-4 mt-6 sm:mt-4">
                         <div className="absolute bottom-0 w-2/3 h-4 rounded-[50%] bg-black/15 blur-md" />
                         <img src="/assets/images/Nutella-PNG-Images-HD.webp" alt="Nutella"
                           style={{ height: jarHeight }}
                           className={`relative w-auto object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,0.25)] transition-transform duration-300 ${available ? 'group-hover:scale-105 group-hover:-rotate-3' : 'grayscale'}`} />
                       </div>
 
-                      <h3 className={`relative text-xl md:text-2xl font-black leading-snug mb-3 ${available ? 'text-[#000000]' : 'text-gray-400'}`}>{tier.titleAr}</h3>
+                      <h3 className={`relative text-sm sm:text-xl md:text-2xl font-black leading-snug mb-2 sm:mb-3 ${available ? 'text-[#000000]' : 'text-gray-400'}`}>{tier.titleAr}</h3>
 
-                      <div className={`relative inline-flex items-center gap-2 px-4 py-1.5 rounded-full mb-4 text-sm md:text-base font-black ${available ? 'bg-[#D70B0E] text-white' : 'bg-gray-300 text-gray-500'}`}>
+                      <div className={`relative inline-flex flex-wrap justify-center items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 rounded-full mb-3 sm:mb-5 text-[11px] sm:text-sm md:text-base font-black ${available ? 'bg-[#D70B0E] text-white' : 'bg-gray-300 text-gray-500'}`}>
                         <span>{tier.spinsAr}</span>
                         <span className="flex gap-1" dir="ltr">
                           {Array.from({ length: tier.spins }).map((_, s) => (
@@ -1249,19 +1282,7 @@ const App: React.FC = () => {
                         </span>
                       </div>
 
-                      {/* One line per spin: which prizes that spin can give */}
-                      <div className="relative w-full space-y-1.5 mb-5">
-                        {SPIN_STAGES.filter(s => s <= tier.spins).map(spin => (
-                          <div key={spin} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-right ${available ? 'bg-[#D70B0E]/5 ring-1 ring-[#D70B0E]/15' : 'bg-gray-200'}`}>
-                            <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-black ${available ? 'bg-[#D70B0E] text-white' : 'bg-gray-400 text-white'}`}>{spin}</span>
-                            <span className={`text-xs md:text-[13px] font-bold leading-snug ${available ? 'text-black' : 'text-gray-400'}`}>
-                              {getSpinLots(spin).map(l => l.labelAr.replace('\n', ' ')).join(' · ')}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-
-                      <span className={`relative mt-auto btn-3d w-full py-3 md:py-4 font-black rounded-xl md:rounded-2xl text-center text-base md:text-lg transition-transform ${available ? 'nutella-gradient text-white group-hover:scale-105' : 'bg-gray-300 text-gray-500'}`}>
+                      <span className={`relative mt-auto btn-3d w-full py-2.5 md:py-4 font-black rounded-xl md:rounded-2xl text-center text-sm md:text-lg transition-transform ${available ? 'nutella-gradient text-white group-hover:scale-105' : 'bg-gray-300 text-gray-500'}`}>
                         {available ? 'اختار' : 'ما متوفرش'}
                       </span>
                     </button>
