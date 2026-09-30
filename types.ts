@@ -74,4 +74,4 @@ export interface SpinLog {
   spinNumber?: number;
 }
 
-export type AdminView = 'dashboard' | 'performance' | 'malls' | 'inventory' | 'reports';
+export type AdminView = 'dashboard' | 'performance' | 'malls' | 'inventory' | 'reports' | 'settings';

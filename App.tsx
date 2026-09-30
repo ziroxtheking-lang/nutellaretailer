@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Wheel from './components/Wheel';
 import { Mall, LotConfig, LotType, SpinLog, AdminView, WheelKind, PromoTier, CycleState, SpinStage } from './types';
-import { LOTS, TIERS, SPIN_STAGES, CYCLE_POOLS, getTier, getSpinLots, wheelForSpin, spinOfWheel, cityAr, storesCountAr, ADMIN_PASSWORD, GREETINGS, ASSETS } from './constants';
+import { LOTS, TIERS, SPIN_STAGES, CYCLE_POOLS, getTier, getSpinLots, wheelForSpin, spinOfWheel, cityAr, storesCountAr, ADMIN_PASSWORD, GREETINGS, ASSETS, STARTING_STOCK } from './constants';
 import { DB } from './services/databaseService';
 import { downloadExcel } from './services/excelExport';
 import { CITIES } from './database';
@@ -41,6 +41,19 @@ const StoreTag: React.FC<{ mall?: Mall; className?: string }> = ({ mall, classNa
   );
 };
 
+// Tablet connection pill (bottom-left): hidden when online with nothing waiting.
+const SyncBadge: React.FC<{ online: boolean; pending: number }> = ({ online, pending }) => {
+  if (online && pending === 0) return null;
+  return (
+    <div dir="rtl" className={`font-arabic fixed bottom-3 left-3 z-[300] flex items-center gap-2 px-3 py-1.5 rounded-full border-2 border-white shadow-lg text-xs md:text-sm font-black text-white ${online ? 'bg-black' : 'bg-[#D70B0E]'}`}>
+      <span className={`w-2 h-2 rounded-full ${online ? 'bg-yellow-300 animate-pulse' : 'bg-white'}`} />
+      {online
+        ? `كنصيفطو ${pending} دورة…`
+        : pending > 0 ? `بلا انترنت · ${pending} دورة محفوظة ف التابليت` : 'بلا انترنت · اللعبة خدامة عادي'}
+    </div>
+  );
+};
+
 // Admin background (admin bg.png: white with Nutella jars on the right), on its own
 // fixed layer above the tablet's red background.
 const AdminBackdrop: React.FC = () => (
@@ -72,6 +85,7 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
   ticket: <path d="M3 7h18v3a2 2 0 0 0 0 4v3H3v-3a2 2 0 0 0 0-4z" />,
   key: <><circle cx="8" cy="15" r="4" /><path d="M11 12l9-9M17 6l3 3" /></>,
   reset: <><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></>,
+  gear: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>,
 };
 
 const Icon: React.FC<{ name: string; className?: string; strokeWidth?: number }> = ({ name, className = 'w-5 h-5', strokeWidth = 2 }) => (
@@ -104,6 +118,7 @@ const ADMIN_PAGES: { id: AdminView; label: string; icon: string; subtitle: strin
   { id: 'malls', label: 'Magasins', icon: 'store', subtitle: 'Noms, codes SFA et codes d’accès' },
   { id: 'inventory', label: 'Stocks', icon: 'box', subtitle: 'Stock de lots par magasin' },
   { id: 'reports', label: 'Rapports', icon: 'file', subtitle: 'Exports Excel et réinitialisation' },
+  { id: 'settings', label: 'Réglages', icon: 'gear', subtitle: 'Boutons visibles sur les tablettes' },
 ];
 
 // Title block for the tablet's city -> store -> code steps.
@@ -254,6 +269,7 @@ const App: React.FC = () => {
   const stocks = DB.getStocks();
   const logs = DB.getLogs();
   const cycles = DB.getCycles();
+  const settings = DB.getSettings();
 
   // Navigation & Session States
   const [adminLoggedIn, setAdminLoggedIn] = useState(false);
@@ -545,15 +561,10 @@ const App: React.FC = () => {
         promo: promoTier ?? undefined, spinNumber
       };
 
-      // Decrement stock atomically at the database level so this can never race
-      // with an admin edit or another tablet's spin, regardless of sync timing.
-      await DB.adjustStock(mallId, lot.id, -1);
-
-      DB.atomicUpdate(data => {
-        // 1. Add Log
-        data.logs = [newLog, ...data.logs];
-
-        // 2. Advance the active wheel's cycle
+      // Saved on the tablet first (survives no-wifi, reloads and restarts), then sent
+      // to Supabase in the background: stock -1 as an atomic delta + history row.
+      await DB.recordSpin(newLog, data => {
+        // Advance the active wheel's cycle
         if (!data.cycles[mallId]) data.cycles[mallId] = {} as any;
         const currentCycle = data.cycles[mallId][wheel] || getMallWheelCycle(mallId, wheel);
         let nextIndex = currentCycle.index + 1;
@@ -568,7 +579,7 @@ const App: React.FC = () => {
         }
 
         data.cycles[mallId][wheel] = { sequence: nextSequence, index: nextIndex, completed: nextCompleted };
-      }, mallId);
+      });
 
       // Play win sound
       winSoundRef.current?.play().catch(e => console.log("Audio play failed:", e));
@@ -1040,6 +1051,44 @@ const App: React.FC = () => {
     </div>
   );
 
+  const renderSettings = () => {
+    const toggles: { key: 'showChangeStore' | 'showChangeCity'; title: string; label: string; where: string }[] = [
+      { key: 'showChangeStore', title: 'Bouton « Changer de magasin »', label: 'بدّل المحل', where: 'Écran des 3 offres (en bas) et écran du code d’accès' },
+      { key: 'showChangeCity', title: 'Bouton « Changer de ville »', label: 'بدّل المدينة', where: 'Écran de choix du magasin' },
+    ];
+    return (
+      <div className="space-y-5 animate-in fade-in duration-500 pb-20 max-w-3xl">
+        {!DB.settingsAvailable && (
+          <div className="p-4 rounded-2xl bg-[#D70B0E] text-white border-2 border-white shadow-md text-sm font-bold">
+            ⚠️ Réglages non enregistrables : exécutez une fois <span className="font-mono">supabase/add_app_settings.sql</span> dans Supabase → SQL Editor. En attendant, tous les boutons restent visibles.
+          </div>
+        )}
+        {toggles.map(t => {
+          const on = settings[t.key];
+          return (
+            <div key={t.key} className="admin-card p-5 rounded-2xl flex items-center gap-4">
+              <span className={`shrink-0 w-11 h-11 rounded-xl flex items-center justify-center text-white ${on ? 'bg-black' : 'bg-black/25'}`}><Icon name="store" className="w-5 h-5" /></span>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base md:text-lg text-black font-black leading-tight">{t.title}</h3>
+                <p className="text-xs text-black/45 font-bold mt-0.5">{t.where}</p>
+                <span dir="rtl" className={`inline-block mt-2 px-3 py-1 rounded-full text-xs font-black font-arabic ${on ? 'bg-black text-white' : 'bg-black/10 text-black/40 line-through'}`}>{t.label}</span>
+              </div>
+              <div className="flex flex-col items-center gap-1.5">
+                <button role="switch" aria-checked={on} aria-label={t.title}
+                  onClick={async () => { if (!(await DB.setSetting(t.key, !on))) alert('❌ Échec de l’enregistrement. Vérifiez que supabase/add_app_settings.sql a été exécuté.'); }}
+                  className={`relative w-16 h-9 rounded-full border-2 border-white shadow-md transition-colors ${on ? 'bg-green-500' : 'bg-black/30'}`}>
+                  <span className={`absolute top-0.5 w-7 h-7 rounded-full bg-white shadow transition-all ${on ? 'left-[calc(100%-1.9rem)]' : 'left-0.5'}`} />
+                </button>
+                <span className={`text-[10px] font-black uppercase tracking-wider ${on ? 'text-green-600' : 'text-black/40'}`}>{on ? 'Affiché' : 'Masqué'}</span>
+              </div>
+            </div>
+          );
+        })}
+        <p className="text-xs text-black/45 font-bold px-1">Les tablettes appliquent le changement en quelques secondes, sans recharger la page.</p>
+      </div>
+    );
+  };
+
   const renderGalleryModal = () => {
     if (!isGalleryOpen || logsWithPhotos.length === 0) return null;
     const currentLog = logsWithPhotos[selectedLogIndex];
@@ -1149,7 +1198,7 @@ const App: React.FC = () => {
             ) : !currentMall ? (
               // Step 2: choose the store in that city
               <div className="w-full max-w-5xl px-2 md:px-0">
-                <StepHeader step={2} title={cityAr(selectedCity ?? undefined)} onBack={() => setSelectedCity(null)} backLabel="بدّل المدينة" />
+                <StepHeader step={2} title={cityAr(selectedCity ?? undefined)} onBack={settings.showChangeCity ? () => setSelectedCity(null) : undefined} backLabel="بدّل المدينة" />
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
                   {(mallsByCity.find(g => g.city === selectedCity)?.malls ?? []).map((mall, i) => (
                     <button key={mall.id} onClick={() => setCurrentMall(mall)}
@@ -1171,8 +1220,12 @@ const App: React.FC = () => {
             ) : (
               // Step 3: access code
               <div className="w-full max-w-sm md:max-w-md bg-white p-10 md:p-16 rounded-[3rem] md:rounded-[4rem] border-4 md:border-[6px] border-[#D70B0E] text-center shadow-2xl">
-                <button onClick={() => { setSelectedCity(currentMall.city ?? null); setCurrentMall(null); }} className="btn-3d btn-black mb-8 md:mb-10 px-8 py-3 rounded-full text-sm md:text-base font-black">→ بدّل المحل</button>
-                <br />
+                {settings.showChangeStore && (
+                  <>
+                    <button onClick={() => { setSelectedCity(currentMall.city ?? null); setCurrentMall(null); }} className="btn-3d btn-black mb-8 md:mb-10 px-8 py-3 rounded-full text-sm md:text-base font-black">→ بدّل المحل</button>
+                    <br />
+                  </>
+                )}
                 <span className="inline-block mb-5 px-4 py-1 rounded-full bg-[#D70B0E] text-white text-xs md:text-sm font-black shadow-md">المرحلة 3 من 3</span>
                 <div className="w-24 h-24 md:w-28 md:h-28 mx-auto mb-4 rounded-3xl bg-gradient-to-br from-[#FFFFFF] to-[#FDE2E3] flex items-center justify-center p-3">
                   <img src="/assets/images/storeimage.webp" alt="" className="w-full h-full object-contain drop-shadow-md" />
@@ -1242,7 +1295,7 @@ const App: React.FC = () => {
         </header>
         <main className="z-10 w-full flex-grow flex flex-col items-center justify-start max-w-full">
           {!promoTier ? (
-            <div className="w-full max-w-5xl mx-auto text-center">
+            <div className="w-full max-w-5xl mx-auto text-center flex-grow flex flex-col">
               <div className="grid grid-cols-3 gap-2 sm:gap-4 md:gap-6 items-stretch">
                 {TIERS.map((tier, i) => {
                   const available = tierAvailable(tier.id);
@@ -1289,7 +1342,10 @@ const App: React.FC = () => {
                   );
                 })}
               </div>
-              <button onClick={handleMallLogout} className="btn-3d btn-black mt-6 md:mt-8 px-6 py-2.5 rounded-full text-sm md:text-base font-black">بدّل المحل</button>
+              {/* Pushed to the very bottom of the screen, away from the boxes */}
+              {settings.showChangeStore && (
+                <button onClick={handleMallLogout} className="btn-3d btn-black mt-auto self-center translate-y-0 px-6 py-2.5 rounded-full text-sm md:text-base font-black">بدّل المحل</button>
+              )}
             </div>
           ) : !isValidated ? (
             <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center p-4 md:p-8 animate-in fade-in zoom-in-95 duration-500">
@@ -1456,8 +1512,8 @@ const App: React.FC = () => {
           </nav>
           <div className="pt-5 mt-5 border-t border-black/10 space-y-4">
             <div className="flex items-center gap-2 px-2">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-              <span className="text-[10px] uppercase font-black text-black/50 tracking-widest">Synchronisation active</span>
+              <div className={`w-2 h-2 rounded-full animate-pulse ${DB.online ? 'bg-green-500' : 'bg-[#D70B0E]'}`}></div>
+              <span className={`text-[10px] uppercase font-black tracking-widest ${DB.online ? 'text-black/50' : 'text-[#D70B0E]'}`}>{DB.online ? 'Synchronisation active' : 'Hors ligne · données locales'}</span>
             </div>
             <button onClick={() => setAdminLoggedIn(false)} className="btn-3d btn-black w-full py-3 rounded-xl text-xs uppercase font-black tracking-widest">Déconnexion</button>
           </div>
@@ -1489,6 +1545,18 @@ const App: React.FC = () => {
                 <Icon name="flame" className="w-4 h-4 group-hover:rotate-12 transition-transform" />
                 <span>Reset Système</span>
               </button>
+              <button
+                onClick={async () => {
+                  const q = STARTING_STOCK;
+                  if (!confirm(`Remettre le stock de TOUS les magasins (${malls.length}) au quota de départ ?\n\nNutella 15g ${q['Nutella 15g']} · B-Ready ${q['Nutella B-Ready']} · Autocollant ${q['Autocollant']} · Trousse couleur ${q['Trousse + crayons de couleur']} · Trousse non tissé ${q['Trousse non tissé + crayons cire']} · Surligneur ${q['Surligneur 5 pcs']} · Set fluo ${q['Set fluo']}\n\nL'historique des gains est conservé.`)) return;
+                  const ok = await DB.restockAll(STARTING_STOCK);
+                  alert(ok ? '✅ Stock remis au quota de départ pour tous les magasins.' : '❌ Échec de la mise à jour en base. Vérifiez la connexion et réessayez.');
+                }}
+                className="btn-3d btn-black px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 hover:!bg-green-600 transition-colors"
+              >
+                <Icon name="box" className="w-4 h-4" />
+                <span>Reset Quota</span>
+              </button>
               <div className="pl-4 ml-1 border-l border-black/10 text-right">
                 <span className="block text-[10px] uppercase tracking-[0.2em] font-black text-black/40">{new Date().toLocaleDateString('fr-FR')}</span>
                 <span className="text-xl font-mono text-black font-black">{new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -1500,6 +1568,7 @@ const App: React.FC = () => {
           {adminView === 'malls' && renderMalls()}
           {adminView === 'inventory' && renderInventory()}
           {adminView === 'reports' && renderReports()}
+          {adminView === 'settings' && renderSettings()}
           {renderGalleryModal()}
         </main>
       </div>
@@ -1509,7 +1578,7 @@ const App: React.FC = () => {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={renderClientView()} />
+        <Route path="/" element={<>{renderClientView()}<SyncBadge online={DB.online} pending={DB.pendingSpins()} /></>} />
         <Route path="/admin" element={renderAdminView()} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

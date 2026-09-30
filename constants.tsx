@@ -62,6 +62,17 @@ export const CYCLE_POOLS: Record<WheelKind, LotType[]> = {
   spin3: ['Surligneur 5 pcs', 'Surligneur 5 pcs', 'Surligneur 5 pcs', 'Set fluo', 'Set fluo', 'Set fluo'],
 };
 
+// Starting quota of every store (used by the admin "Reset quota" button and supabase/reset_fresh.sql).
+export const STARTING_STOCK: Record<LotType, number> = {
+  'Nutella 15g': 22,
+  'Nutella B-Ready': 22,
+  'Autocollant': 11,
+  'Trousse + crayons de couleur': 2,
+  'Trousse non tissé + crayons cire': 2,
+  'Surligneur 5 pcs': 1,
+  'Set fluo': 1,
+};
+
 export const ADMIN_PASSWORD = 'Kinder2026*';
 
 export const GREETINGS = [
