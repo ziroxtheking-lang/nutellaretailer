@@ -15,7 +15,16 @@ const TICKET_PHOTOS_BUCKET = 'ticket-photos';
 
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL as string;
 const supabaseKey = (import.meta as any).env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
-const supabase = createClient(supabaseUrl, supabaseKey);
+// Every request gets a time limit: on weak Wi-Fi a call can otherwise hang for minutes
+// without failing, which would freeze syncing (the outbox retries after a timeout).
+const REQUEST_TIMEOUT_MS = 25000;
+const fetchWithTimeout: typeof fetch = (input, init: RequestInit = {}) => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(new DOMException('Request timed out', 'TimeoutError')), REQUEST_TIMEOUT_MS);
+  init.signal?.addEventListener('abort', () => ctrl.abort(init.signal?.reason));
+  return fetch(input, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+};
+const supabase = createClient(supabaseUrl, supabaseKey, { global: { fetch: fetchWithTimeout } });
 
 type Listener = () => void;
 
@@ -152,8 +161,10 @@ class DatabaseService {
   }
 
   private async fetchSettings() {
-    const { data, error } = await supabase.from('app_settings').select('key,value');
+    const { data, error } = await supabase.from('app_settings').select('key,value').retry(false);
     if (error) {
+      // No connection: keep the last known settings.
+      if (isNetworkError(error)) { this.setOnline(false); return; }
       // Table missing (SQL not run yet): keep every button visible.
       this.settingsAvailable = false;
       return;
@@ -308,12 +319,14 @@ class DatabaseService {
   }
 
   async fetchAll() {
-    await this.flushOutbox();
+    // Settings first: an admin switch must reach the tablet even while spins are
+    // still being sent on a slow connection.
     try {
       await this.fetchSettings();
     } catch (e) {
       console.warn('Could not load settings', e);
     }
+    await this.flushOutbox();
     const syncBefore = this.syncCount;
     try {
       const [mallsRes, stocksRes, cyclesRes, logsRes] = await Promise.all([
