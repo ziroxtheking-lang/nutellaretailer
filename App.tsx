@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Wheel from './components/Wheel';
 import { Mall, LotConfig, LotType, SpinLog, AdminView, WheelKind, PromoTier, CycleState, SpinStage } from './types';
-import { LOTS, TIERS, SPIN_STAGES, CYCLE_POOLS, getTier, getSpinLots, wheelForSpin, spinOfWheel, cityAr, storesCountAr, ADMIN_PASSWORD, GREETINGS, ASSETS, STARTING_STOCK } from './constants';
+import { LOTS, TIERS, SPIN_STAGES, CYCLE_POOLS, getTier, getSpinLots, getPrizeSpin, FALLBACK_SPIN, wheelForSpin, spinOfWheel, cityAr, storesCountAr, ADMIN_PASSWORD, GREETINGS, ASSETS, STARTING_STOCK } from './constants';
 import { DB } from './services/databaseService';
 import { downloadExcel } from './services/excelExport';
 import { CITIES } from './database';
@@ -389,8 +389,10 @@ const App: React.FC = () => {
 
   const generateNextCycle = useCallback((mallId: string, wheel: WheelKind): CycleState => {
     const mallStocks: Record<string, number> | undefined = DB.getStocks()[mallId];
-    const pool = CYCLE_POOLS[wheel];
-    const eligibleIds: LotType[] = getSpinLots(spinOfWheel(wheel)).map(l => l.id);
+    // Spins 2 and 3 draw from spin 1's prizes (and ratio) once their own are out of stock.
+    const prizeSpin = getPrizeSpin(spinOfWheel(wheel), mallStocks);
+    const pool = CYCLE_POOLS[wheelForSpin(prizeSpin)];
+    const eligibleIds: LotType[] = getSpinLots(prizeSpin).map(l => l.id);
 
     if (!mallStocks) return { sequence: shuffleArray(pool), index: 0, completed: 0 };
 
@@ -463,8 +465,12 @@ const App: React.FC = () => {
       if (currentStocks) {
         let currentIndex = mallCycle.index;
         let modified = false;
+        // Also skip prizes this spin no longer draws from (e.g. Nutella left in a spin-2/3
+        // cycle after its own prizes were restocked, or the other way round).
+        const allowed = getSpinLots(getPrizeSpin(spinOfWheel(wheel), currentStocks)).map(l => l.id);
+        const skip = (id: LotType) => !(currentStocks[id] > 0) || !allowed.includes(id);
 
-        while (currentIndex < mallCycle.sequence.length && currentStocks[mallCycle.sequence[currentIndex]] <= 0) {
+        while (currentIndex < mallCycle.sequence.length && skip(mallCycle.sequence[currentIndex])) {
           currentIndex++;
           modified = true;
         }
@@ -1248,15 +1254,25 @@ const App: React.FC = () => {
     const currentStocks: Record<string, number> | undefined = stocks[mallId];
     const mallCycle = getMallWheelCycle(mallId, currentWheel);
     const currentTier = getTier(promoTier ?? TIERS[0].id);
-    const eligibleLotIds: LotType[] = getSpinLots(spinOfWheel(currentWheel)).map(l => l.id);
+    const eligibleLotIds: LotType[] = getSpinLots(getPrizeSpin(spinOfWheel(currentWheel), currentStocks)).map(l => l.id);
 
     // Prizes left in this store for a given spin number.
     const spinStock = (spin: SpinStage) =>
       getSpinLots(spin).reduce((sum, lot) => sum + Math.max(0, currentStocks?.[lot.id] ?? 0), 0);
     // How many more customers a promotion can serve: every one of its spins needs a prize,
     // so it's limited by the emptiest spin group among spins 1..N.
-    const tierStock = (tierId: PromoTier) =>
-      Math.min(...SPIN_STAGES.filter(s => s <= getTier(tierId).spins).map(spinStock));
+    // Spins 2 and 3 share spin 1's Nutella once their own prizes run out, so a customer
+    // can take 1 to 3 Nutella: find the most customers the Nutella stock still covers.
+    const tierStock = (tierId: PromoTier) => {
+      const stages = SPIN_STAGES.filter(s => s <= getTier(tierId).spins);
+      const nutella = spinStock(1);
+      const nutellaNeeded = (customers: number) => customers + stages
+        .filter(s => FALLBACK_SPIN[s] === 1)
+        .reduce((sum, s) => sum + Math.max(0, customers - spinStock(s)), 0);
+      let customers = 0;
+      while (nutellaNeeded(customers + 1) <= nutella) customers++;
+      return customers;
+    };
     const tierAvailable = (tierId: PromoTier) => tierStock(tierId) > 0;
     const promoHasStock = promoTier ? tierAvailable(promoTier) : false;
 
@@ -1265,7 +1281,8 @@ const App: React.FC = () => {
 
     if (currentStocks) {
       let currentValidIndex = mallCycle.index;
-      while (currentValidIndex < mallCycle.sequence.length && currentStocks[mallCycle.sequence[currentValidIndex]] <= 0) {
+      while (currentValidIndex < mallCycle.sequence.length &&
+        (!(currentStocks[mallCycle.sequence[currentValidIndex]] > 0) || !eligibleLotIds.includes(mallCycle.sequence[currentValidIndex]))) {
         currentValidIndex++;
       }
 

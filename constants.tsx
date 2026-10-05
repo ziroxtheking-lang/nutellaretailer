@@ -50,6 +50,16 @@ export const wheelForSpin = (spin: SpinStage): WheelKind => `spin${spin}` as Whe
 export const spinOfWheel = (wheel: WheelKind): SpinStage => Number(wheel.slice(4)) as SpinStage;
 // Prizes a given spin number can land on.
 export const getSpinLots = (spin: SpinStage): LotConfig[] => LOTS.filter(l => l.spin === spin);
+// When a spin's own prizes are all out of stock in a store, it hands out another spin's
+// prizes instead: spins 2 and 3 fall back to spin 1 (Nutella 15g / B-Ready).
+export const FALLBACK_SPIN: Partial<Record<SpinStage, SpinStage>> = { 2: 1, 3: 1 };
+const spinHasStock = (spin: SpinStage, stocks?: Record<string, number>) =>
+  getSpinLots(spin).some(l => (stocks?.[l.id] ?? 0) > 0);
+// The spin whose prizes (and cycle ratio) a given spin actually draws from right now.
+export const getPrizeSpin = (spin: SpinStage, stocks?: Record<string, number>): SpinStage => {
+  const fallback = FALLBACK_SPIN[spin];
+  return fallback && stocks && !spinHasStock(spin, stocks) ? fallback : spin;
+};
 // Every prize a promotion can give across all of its spins.
 export const getTierLots = (id: PromoTier): LotConfig[] => LOTS.filter(l => l.spin <= getTier(id).spins);
 
